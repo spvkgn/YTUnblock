@@ -1,0 +1,15 @@
+#!/bin/sh
+# shellcheck disable=SC3043,SC2034
+
+. /lib/functions.sh
+
+setup_iptables()
+{
+    local queue_num
+    config_get queue_num config queue_num 537
+    iptables -t mangle -A FORWARD -p tcp --dport 443 -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass
+    iptables -I OUTPUT -m mark --mark 32768/32768 -j ACCEPT
+}
+
+config_load youtubeUnblock
+setup_iptables

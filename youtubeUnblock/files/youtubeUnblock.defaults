@@ -1,0 +1,13 @@
+#!/bin/sh
+
+uci -q batch <<-EOT
+	delete firewall.youtubeUnblock
+	set firewall.youtubeUnblock=include
+	set firewall.youtubeUnblock.type=script
+	set firewall.youtubeUnblock.path=/usr/share/youtubeUnblock/firewall.include
+	set firewall.youtubeUnblock.family=IPv4
+	set firewall.youtubeUnblock.reload=1
+	commit firewall
+EOT
+
+exit 0

@@ -1,0 +1,87 @@
+name: OpenWrt 21.02 build
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.editorconfig'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gh.outputs.version }}
+      sha: ${{ steps.gh.outputs.sha }}
+    steps:
+      - name: GH
+        id: gh
+        env:
+          REPO: 'Waujito/youtubeUnblock'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          echo "version=$(gh api repos/$REPO/releases/latest --jq '.tag_name' | sed 's/v//')" >> $GITHUB_OUTPUT
+          echo "sha=$(gh api repos/$REPO/commits/main --jq '.sha[:7]')" >> $GITHUB_OUTPUT
+
+  build:
+    name: build ${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.sha }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - branch: openwrt-21.02
+            arch: mipsel_24kc
+    container:
+      image: openwrt/sdk:${{ matrix.arch }}-${{ matrix.branch }}
+      options: --user root
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 'openwrt-21.02'
+
+      - name: Prepare build
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          sed -i "s/PKG_REV:=.*$/PKG_REV:=$SHA/;s/PKG_VERSION:=.*$/PKG_VERSION:=$VERSION-$SHA/" youtubeUnblock/Makefile
+
+      - name: Build packages
+        id: build
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        working-directory: /builder
+        run: |
+          echo "src-link youtubeUnblock $GITHUB_WORKSPACE" >> feeds.conf
+          ./scripts/feeds update youtubeUnblock
+          ./scripts/feeds install -a -p youtubeUnblock
+          make defconfig
+          make package/youtubeUnblock/compile -j$(nproc) V=s
+          find ./bin -type f -name 'youtubeUnblock*.ipk' -exec mv {} $GITHUB_WORKSPACE \;
+
+      - name: Upload artifacts
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.branch }}-${{ matrix.arch }}
+          path: ./**/youtubeUnblock*.ipk
+          if-no-files-found: error
+
+      - name: Upload assets
+        if: steps.build.outcome == 'success'
+        uses: slord399/action-automatic-releases@v1.0.1
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          automatic_release_tag: '21.02'
+          prerelease: false
+          title: ${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.sha }}
+          files: |
+            ./**/youtubeUnblock*.ipk

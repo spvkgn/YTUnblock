@@ -42,7 +42,10 @@ start_instance() {
 	config_get_bool enabled "$cfg" enabled 1
 	[ "$enabled" -eq 0 ] && return 1
 
-	. /lib/functions/network.sh
+	local queue_num
+	config_get queue_num config queue_num 537
+	iptables -t mangle -A FORWARD -p tcp --dport 443 -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass
+	iptables -I OUTPUT -m mark --mark 32768/32768 -j ACCEPT
 
 	OPTS=""
 
@@ -89,5 +92,5 @@ stop_service() {
 	local queue_num
 	config_load 'youtubeUnblock'
 	config_get queue_num config queue_num 537
-	iptables -t mangle -D OUTPUT -p tcp -m tcp --dport 443 -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass 2>/dev/null
+	iptables -t mangle -D FORWARD -p tcp -m tcp --dport 443 -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass 2>/dev/null
 }

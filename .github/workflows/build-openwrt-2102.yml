@@ -60,9 +60,16 @@ jobs:
           SHA: ${{ needs.prepare.outputs.sha }}
         working-directory: /builder
         run: |
+          mv feeds.conf.default feeds.conf
+          sed -e 's|base.*\.git|base https://github.com/openwrt/openwrt.git|' \
+              -e 's|packages.*\.git|packages https://github.com/openwrt/packages.git|' \
+              -e 's|luci.*\.git|luci https://github.com/openwrt/luci.git|' \
+              -e 's|routing.*\.git|routing https://github.com/openwrt/routing.git|' \
+              -e 's|telephony.*\.git|telephony https://github.com/openwrt/telephony.git|' \
+              -i feeds.conf
           echo "src-link youtubeUnblock $GITHUB_WORKSPACE" >> feeds.conf
-          ./scripts/feeds update youtubeUnblock
-          ./scripts/feeds install -a -p youtubeUnblock
+          ./scripts/feeds update base packages youtubeUnblock
+          ./scripts/feeds install -a
           make defconfig
           make package/youtubeUnblock/compile -j$(nproc) V=s
           find ./bin -type f -name 'youtubeUnblock*.ipk' -exec mv {} $GITHUB_WORKSPACE \;

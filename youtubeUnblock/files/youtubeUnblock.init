@@ -5,7 +5,10 @@ START=95
 USE_PROCD=1
 PROCD_DEBUG=1
 PROG=/usr/bin/youtubeUnblock
-OPTS=""
+
+DPORT='443'
+FW_MARK='32768'
+FW_MASK='32768'
 
 xappend() {
 	local name="$2" value="$1"
@@ -44,13 +47,14 @@ start_instance() {
 
 	local queue_num
 	config_get queue_num config queue_num 537
-	iptables -t mangle -A FORWARD -p tcp --dport 443 -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass
-	iptables -I OUTPUT -m mark --mark 32768/32768 -j ACCEPT
+	iptables -t mangle -A FORWARD -p tcp --dport $DPORT -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass
+	iptables -I OUTPUT -m mark --mark ${FW_MARK}/${FW_MASK} -j ACCEPT
 
 	OPTS=""
 
 	append_opts "$cfg" \
 		sni_domains \
+		exclude_domains \
 		queue_num \
 		fake_sni \
 		fake_sni_seq_len \
@@ -92,5 +96,6 @@ stop_service() {
 	local queue_num
 	config_load 'youtubeUnblock'
 	config_get queue_num config queue_num 537
-	iptables -t mangle -D FORWARD -p tcp -m tcp --dport 443 -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass 2>/dev/null
+	iptables -t mangle -D FORWARD -p tcp -m tcp --dport $DPORT -m connbytes --connbytes-dir original --connbytes-mode packets --connbytes 0:19 -j NFQUEUE --queue-num $queue_num --queue-bypass 2>/dev/null
+	iptables -D OUTPUT -t filter -m mark --mark ${FW_MARK}/${FW_MASK} -j ACCEPT 2>/dev/null
 }

@@ -19,9 +19,12 @@ struct config_t config = {
 	.fake_sni = 1,
 	.fake_sni_seq_len = 1,
 	.frag_middle_sni = 1,
-	.frag_sni_pos = 2,
+	.frag_sni_pos = 1,
 	.use_ipv6 = 1,
 	.fakeseq_offset = 10000,
+	.mark = DEFAULT_RAWSOCKET_MARK,
+	.synfake = 0,
+	.synfake_len = 0,
 
 	.sni_detection = SNI_DETECTION_PARSE,
 
@@ -46,12 +49,16 @@ struct config_t config = {
 	.domains_str = defaul_snistr,
 	.domains_strlen = sizeof(defaul_snistr),
 
+	.exclude_domains_str = "",
+	.exclude_domains_strlen = 0,
+
 	.queue_start_num = DEFAULT_QUEUE_NUM,
 	.fake_sni_pkt = fake_sni_old,
 	.fake_sni_pkt_sz = sizeof(fake_sni_old) - 1, // - 1 for null-terminator
 };
 
 #define OPT_SNI_DOMAINS		1
+#define OPT_EXCLUDE_DOMAINS	25
 #define OPT_FAKE_SNI 		2
 #define OPT_FAKING_TTL		3
 #define OPT_FAKING_STRATEGY	10
@@ -67,19 +74,25 @@ struct config_t config = {
 #define OPT_SNI_DETECTION	17
 #define OPT_NO_IPV6		20
 #define OPT_FAKE_SEQ_OFFSET	21
+#define OPT_PACKET_MARK 	22
+#define OPT_SYNFAKE	 	23
+#define OPT_SYNFAKE_LEN	 	24
 #define OPT_SEG2DELAY 		5
 #define OPT_THREADS 		6
 #define OPT_SILENT 		7
 #define OPT_NO_GSO 		8
 #define OPT_QUEUE_NUM		9
 
-#define OPT_MAX OPT_FAKE_SEQ_OFFSET
+#define OPT_MAX OPT_SNI_DOMAINS
 
 static struct option long_opt[] = {
 	{"help",		0, 0, 'h'},
 	{"version",		0, 0, 'v'},
 	{"sni-domains",		1, 0, OPT_SNI_DOMAINS},
+	{"exclude-domains",	1, 0, OPT_EXCLUDE_DOMAINS},
 	{"fake-sni",		1, 0, OPT_FAKE_SNI},
+	{"synfake",		1, 0, OPT_SYNFAKE},
+	{"synfake-len",		1, 0, OPT_SYNFAKE_LEN},
 	{"fake-sni-seq-len",	1, 0, OPT_FAKE_SNI_SEQ_LEN},
 	{"faking-strategy",	1, 0, OPT_FAKING_STRATEGY},
 	{"fake-seq-offset",	1, 0, OPT_FAKE_SEQ_OFFSET},
@@ -99,6 +112,7 @@ static struct option long_opt[] = {
 	{"no-gso",		0, 0, OPT_NO_GSO},
 	{"no-ipv6",		0, 0, OPT_NO_IPV6},
 	{"queue-num",		1, 0, OPT_QUEUE_NUM},
+	{"packet-mark",		1, 0, OPT_PACKET_MARK},
 	{0,0,0,0}
 };
 
@@ -133,11 +147,14 @@ void print_usage(const char *argv0) {
 	printf("Options:\n");
 	printf("\t--queue-num=<number of netfilter queue>\n");
 	printf("\t--sni-domains=<comma separated domain list>|all\n");
+	printf("\t--exclude-domains=<comma separated domain list>\n");
 	printf("\t--fake-sni={1|0}\n");
 	printf("\t--fake-sni-seq-len=<length>\n");
 	printf("\t--fake-seq-offset=<offset>\n");
 	printf("\t--faking-ttl=<ttl>\n");
 	printf("\t--faking-strategy={randseq|ttl|tcp_check|pastseq}\n");
+	printf("\t--synfake={1|0}\n");
+	printf("\t--synfake-len=<len>\n");
 	printf("\t--frag={tcp,ip,none}\n");
 	printf("\t--frag-sni-reverse={0|1}\n");
 	printf("\t--frag-sni-faked={0|1}\n");
@@ -148,6 +165,7 @@ void print_usage(const char *argv0) {
 	printf("\t--sni-detection={parse|brute}\n");
 	printf("\t--seg2delay=<delay>\n");
 	printf("\t--threads=<threads number>\n");
+	printf("\t--packet-mark=<mark>\n");
 	printf("\t--silent\n");
 	printf("\t--trace\n");
 	printf("\t--no-gso\n");
@@ -190,6 +208,10 @@ int parse_args(int argc, char *argv[]) {
 
 			config.domains_str = optarg;
 			config.domains_strlen = strlen(config.domains_str);
+			break;
+		case OPT_EXCLUDE_DOMAINS:
+			config.exclude_domains_str = optarg;
+			config.exclude_domains_strlen = strlen(config.exclude_domains_str);
 			break;
 		case OPT_SNI_DETECTION:
 			if (strcmp(optarg, "parse") == 0) {
@@ -307,6 +329,24 @@ int parse_args(int argc, char *argv[]) {
 
 			config.fk_winsize = num;
 			break;
+		case OPT_SYNFAKE:
+			if (strcmp(optarg, "1") == 0) {
+				config.synfake = 1;
+			} else if (strcmp(optarg, "0") == 0) {
+				config.synfake = 0;
+			} else {
+				goto invalid_opt;
+			}
+
+			break;
+		case OPT_SYNFAKE_LEN:
+			num = parse_numeric_option(optarg);
+			if (errno != 0 || num < 0) {
+				goto invalid_opt;
+			}
+
+			config.synfake_len = num;
+			break;
 		case OPT_SEG2DELAY:
 			num = parse_numeric_option(optarg);
 			if (errno != 0 || num < 0) {
@@ -331,6 +371,15 @@ int parse_args(int argc, char *argv[]) {
 
 			config.queue_start_num = num;
 			break;
+		case OPT_PACKET_MARK:
+			num = parse_numeric_option(optarg);
+			if (errno != 0 || num < 0) {
+				goto invalid_opt;
+			}
+
+			config.mark = num;
+			break;
+
 		default:
 			goto error;
 		}
@@ -405,6 +454,10 @@ void print_welcome() {
 
 	if (config.fk_winsize) {
 		printf("Response TCP window will be set to %d with the appropriate scale\n", config.fk_winsize);
+	}
+
+	if (config.synfake) {
+		printf("Fake SYN payload will be sent with each TCP request SYN packet\n");
 	}
 
 

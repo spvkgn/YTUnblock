@@ -67,6 +67,8 @@ drop:
 }
 
 int process_tcp_packet(const uint8_t *raw_payload, uint32_t raw_payload_len) {
+	const void *ipxh;
+	uint32_t iph_len;
 	const struct tcphdr *tcph;
 	uint32_t tcph_len;
 	const uint8_t *data;
@@ -78,7 +80,7 @@ int process_tcp_packet(const uint8_t *raw_payload, uint32_t raw_payload_len) {
 	lgtrace_addp("IPv%d", ipxv);
 
 	int ret = tcp_payload_split((uint8_t *)raw_payload, raw_payload_len,
-			      NULL, NULL,
+			      (void *)&ipxh, &iph_len,
 			      (struct tcphdr **)&tcph, &tcph_len,
 			      (uint8_t **)&data, &dlen);
 
@@ -86,6 +88,46 @@ int process_tcp_packet(const uint8_t *raw_payload, uint32_t raw_payload_len) {
 	if (ret < 0) {
 		goto accept;
 	}
+
+	if (tcph->syn && config.synfake) {
+		lgtrace_addp("TCP syn alter");
+		uint8_t payload[MAX_PACKET_SIZE];
+		memcpy(payload, ipxh, iph_len);
+		memcpy(payload + iph_len, tcph, tcph_len);
+		uint32_t fake_len = config.fake_sni_pkt_sz;
+
+		if (config.synfake_len) 
+			fake_len = min(config.synfake_len, fake_len);
+
+		memcpy(payload + iph_len + tcph_len, config.fake_sni_pkt, fake_len);
+
+
+		struct tcphdr *tcph = (struct tcphdr *)(payload + iph_len);
+		if (ipxv == IP4VERSION) {
+			struct iphdr *iph = (struct iphdr *)payload;
+			iph->tot_len = htons(iph_len + tcph_len + fake_len);
+			set_ip_checksum(payload, iph_len);
+			set_tcp_checksum(tcph, iph, iph_len);
+		} else if (ipxv == IP6VERSION) {
+			struct ip6_hdr *ip6h = (struct ip6_hdr *)payload;
+			ip6h->ip6_ctlun.ip6_un1.ip6_un1_plen = 
+				ntohs(tcph_len + fake_len);
+			set_ip_checksum(ip6h, iph_len);
+			set_tcp_checksum(tcph, ip6h, iph_len);
+		}
+
+
+
+		ret = instance_config.send_raw_packet(payload, iph_len + tcph_len + fake_len);
+		if (ret < 0) {
+			lgerror("send_syn_altered", ret);
+			goto accept;
+		}
+		lgtrace_addp("rawsocket sent %d", ret);
+		goto drop;
+	}
+
+	if (tcph->syn) goto accept;
 
 	struct tls_verdict vrd = analyze_tls_data(data, dlen);
 
@@ -662,7 +704,7 @@ struct tls_verdict analyze_tls_data(
 
 			if (config.all_domains) {
 				vrd.target_sni = 1;
-				goto out;
+				goto check_domain;
 			}
 
 
@@ -684,11 +726,45 @@ struct tls_verdict analyze_tls_data(
 						domain_startp, 
 						domain_len)) {
 							vrd.target_sni = 1;
+							goto check_domain;
 					}
 
 					j = i + 1;
 				}
 			}
+
+check_domain:
+			if (vrd.target_sni == 1 && config.exclude_domains_strlen != 0) {
+				unsigned int j = 0;
+				for (unsigned int i = 0; i <= config.exclude_domains_strlen; i++) {
+					if (	i > j &&
+						(i == config.exclude_domains_strlen	||	
+						config.exclude_domains_str[i] == '\0'	||
+						config.exclude_domains_str[i] == ','	|| 
+						config.exclude_domains_str[i] == '\n'	)) {
+
+						unsigned int domain_len = (i - j);
+						const char *sni_startp = sni_name + sni_len - domain_len;
+						const char *domain_startp = config.exclude_domains_str + j;
+
+						if (sni_len >= domain_len &&
+							sni_len < 128 && 
+							!strncmp(sni_startp, 
+							domain_startp, 
+							domain_len)) {
+
+							vrd.target_sni = 0;
+							lgdebugmsg("Excluded SNI: %.*s", 
+								vrd.sni_len, data + vrd.sni_offset);
+							goto out;
+						}
+
+						j = i + 1;
+					}
+				}
+			}
+
+			goto out;
 
 nextExtension:
 			extensionsPtr += 2 + 2 + extensionLen;
@@ -699,6 +775,7 @@ nextMessage:
 
 out:
 	return vrd;
+
 
 brute:
 	if (config.all_domains) {

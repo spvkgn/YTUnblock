@@ -40,11 +40,16 @@ struct config_t {
 	unsigned int seg2_delay;
 	const char *domains_str;
 	unsigned int domains_strlen;
+	const char *exclude_domains_str;
+	unsigned int exclude_domains_strlen;
 	unsigned int all_domains;
 	const char *fake_sni_pkt;
 	unsigned int fake_sni_pkt_sz;
 	unsigned int fk_winsize;
 	unsigned int fakeseq_offset;
+	unsigned int mark;
+	int synfake;
+	unsigned int synfake_len;
 };
 
 extern struct config_t config;
@@ -71,7 +76,7 @@ extern struct config_t config;
 #define FRAGMENTATION_STRATEGY FRAG_STRAT_TCP
 #endif
 
-#define RAWSOCKET_MARK (1 << 15)
+#define DEFAULT_RAWSOCKET_MARK (1 << 15)
 
 #ifdef USE_SEG2_DELAY
 #define SEG2_DELAY 100
